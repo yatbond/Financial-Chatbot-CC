@@ -1,16 +1,96 @@
-export default function AdminPage() {
+import { getMappingUploads, getMappingStats } from './actions'
+import { MappingUploadForm } from '@/components/mapping-upload-form'
+import { MappingUploadHistory } from '@/components/mapping-upload-history'
+import type { AdminMappingUpload, MappingType } from '@/lib/types/database'
+
+interface AdminPageProps {
+  params: Promise<{ projectId: string }>
+}
+
+export default async function AdminPage({ params }: AdminPageProps) {
+  const { projectId } = await params
+
+  const [stats, ftmUploads, hmUploads] = await Promise.all([
+    getMappingStats(),
+    getMappingUploads('financial_type_map'),
+    getMappingUploads('heading_map'),
+  ])
+
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-      <div className="rounded-full bg-zinc-100 p-3">
-        <svg className="h-6 w-6 text-zinc-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-        </svg>
+    <div className="mx-auto max-w-4xl space-y-6 p-6">
+      <div className="rounded-lg border border-zinc-200 bg-white p-5">
+        <h2 className="mb-3 text-sm font-semibold text-zinc-900">Current Mapping State</h2>
+        <div className="grid grid-cols-3 gap-3">
+          <StatCard label="Financial Types" value={stats.financialTypeCount} />
+          <StatCard label="Heading Entries" value={stats.headingCount} />
+          <StatCard label="Heading Aliases" value={stats.aliasCount} />
+        </div>
       </div>
-      <h2 className="text-sm font-medium text-zinc-700">Admin — Phase 4 / 11</h2>
-      <p className="max-w-sm text-xs text-zinc-400">
-        Admin workflows will be built in Phases 4 and 11. Mapping file uploads, ingestion status, and discrepancy review tools will appear here.
-      </p>
+
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <MappingSection
+          title="Financial Type Map"
+          description={
+            <>
+              Maps raw financial type strings from Excel to canonical names.
+              Required columns: <code className="rounded bg-zinc-100 px-1 text-xs">Raw_Financial_Type</code>,{' '}
+              <code className="rounded bg-zinc-100 px-1 text-xs">Clean_Financial_Type</code>.
+              Optional: <code className="rounded bg-zinc-100 px-1 text-xs">Acronyms</code> (pipe-separated).
+            </>
+          }
+          mappingType="financial_type_map"
+          projectId={projectId}
+          uploads={ftmUploads}
+        />
+        <MappingSection
+          title="Heading Map"
+          description={
+            <>
+              Maps item codes to canonical data types and categories.
+              Required columns: <code className="rounded bg-zinc-100 px-1 text-xs">Item_Code</code>,{' '}
+              <code className="rounded bg-zinc-100 px-1 text-xs">Data_Type</code>,{' '}
+              <code className="rounded bg-zinc-100 px-1 text-xs">Friendly_Name</code>.
+              Rows without <code className="rounded bg-zinc-100 px-1 text-xs">Item_Code</code> are skipped.
+            </>
+          }
+          mappingType="heading_map"
+          projectId={projectId}
+          uploads={hmUploads}
+        />
+      </div>
+    </div>
+  )
+}
+
+function StatCard({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg bg-zinc-50 px-4 py-3">
+      <p className="text-2xl font-semibold tabular-nums text-zinc-900">{value}</p>
+      <p className="mt-0.5 text-xs text-zinc-500">{label}</p>
+    </div>
+  )
+}
+
+interface MappingSectionProps {
+  title: string
+  description: React.ReactNode
+  mappingType: MappingType
+  projectId: string
+  uploads: AdminMappingUpload[]
+}
+
+function MappingSection({ title, description, mappingType, projectId, uploads }: MappingSectionProps) {
+  return (
+    <div className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5">
+      <div>
+        <h2 className="text-sm font-semibold text-zinc-900">{title}</h2>
+        <p className="mt-1 text-xs leading-relaxed text-zinc-500">{description}</p>
+      </div>
+      <MappingUploadForm mappingType={mappingType} projectId={projectId} />
+      <div>
+        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">Recent Uploads</h3>
+        <MappingUploadHistory uploads={uploads} />
+      </div>
     </div>
   )
 }
