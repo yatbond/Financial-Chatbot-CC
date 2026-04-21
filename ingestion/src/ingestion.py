@@ -26,6 +26,7 @@ from .db import (
     upsert_sheet_metadata,
 )
 from .normalizer import normalize_rows
+from .overlap import resolve_overlap
 from .parser import WorkbookParseResult, parse_workbook
 from .storage import download_file
 
@@ -131,8 +132,22 @@ def _ingest(conn, upload_id: str) -> None:
         unmapped_heading_count=len(total_unmapped_ic),
     )
 
+    try:
+        overlap_result = resolve_overlap(conn, upload_id, project_id)
+        log.info(
+            "Overlap resolved: upload=%s discrepancies=%d deactivated=%s",
+            upload_id,
+            overlap_result.discrepancy_count,
+            overlap_result.deactivated_upload_ids,
+        )
+    except Exception as exc:
+        log.exception("Overlap resolution failed for upload %s", upload_id)
+        update_upload_status(conn, upload_id, "invalid", ingestion_error=str(exc))
+        return
+
     log.info(
-        "Ingestion complete: upload=%s rows=%d status=%s unmapped_ft=%d unmapped_ic=%d",
+        "Ingestion complete: upload=%s rows=%d status=%s unmapped_ft=%d unmapped_ic=%d discrepancies=%d",
         upload_id, total_rows, validation_status,
         len(total_unmapped_ft), len(total_unmapped_ic),
+        overlap_result.discrepancy_count,
     )
