@@ -95,7 +95,17 @@ export async function uploadReport(
     return { error: `Failed to save upload record: ${insertError.message}`, success: false }
   }
 
-  // Phase 5 placeholder: trigger ingestion worker for upload.id
+  // Fire-and-forget: ingestion runs asynchronously in the Python service
+  const ingestionUrl = process.env.INGESTION_SERVICE_URL
+  if (ingestionUrl && upload?.id) {
+    fetch(`${ingestionUrl}/ingest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ upload_id: upload.id }),
+    }).catch((err) => {
+      console.error('[ingestion] Failed to trigger ingestion service:', err)
+    })
+  }
 
   revalidatePath(`/projects/${projectId}/reports`)
   return { error: null, success: true, uploadId: upload.id }
