@@ -153,7 +153,7 @@ def insert_normalized_rows(conn, rows: list[dict]) -> int:
                     r.get("value"),
                     r.get("source_row_number"),
                     r.get("source_cell_reference"),
-                    True,
+                    False,   # is_active — set to True by resolve_overlap()
                 )
                 for r in rows
             ],
