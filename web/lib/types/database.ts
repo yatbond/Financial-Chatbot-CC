@@ -351,6 +351,10 @@ export type AdminMappingUploadUpdate = Partial<
 // Supabase Database type map (for use with createClient<Database>)
 // ─────────────────────────────────────────────────────────────
 
+// supabase-js v2.104+ GenericTable requires Relationships and GenericSchema
+// requires Views. We declare both as empty since we don't use them.
+type NoRelationships = { Relationships: [] }
+
 export interface Database {
   public: {
     Tables: {
@@ -358,58 +362,59 @@ export interface Database {
         Row: Project
         Insert: ProjectInsert
         Update: ProjectUpdate
-      }
+      } & NoRelationships
       project_members: {
         Row: ProjectMember
         Insert: ProjectMemberInsert
         Update: ProjectMemberUpdate
-      }
+      } & NoRelationships
       report_uploads: {
         Row: ReportUpload
         Insert: ReportUploadInsert
         Update: ReportUploadUpdate
-      }
+      } & NoRelationships
       report_sheet_metadata: {
         Row: ReportSheetMetadata
         Insert: ReportSheetMetadataInsert
         Update: Partial<ReportSheetMetadataInsert>
-      }
+      } & NoRelationships
       normalized_financial_rows: {
         Row: NormalizedFinancialRow
         Insert: NormalizedFinancialRowInsert
         Update: Partial<NormalizedFinancialRowInsert>
-      }
+      } & NoRelationships
       financial_type_map: {
         Row: FinancialTypeMap
         Insert: FinancialTypeMapInsert
         Update: FinancialTypeMapUpdate
-      }
+      } & NoRelationships
       heading_map: {
         Row: HeadingMap
         Insert: HeadingMapInsert
         Update: HeadingMapUpdate
-      }
+      } & NoRelationships
       heading_aliases: {
         Row: HeadingAlias
         Insert: HeadingAliasInsert
         Update: Partial<HeadingAliasInsert>
-      }
+      } & NoRelationships
       discrepancies: {
         Row: Discrepancy
         Insert: DiscrepancyInsert
         Update: DiscrepancyUpdate
-      }
+      } & NoRelationships
       query_logs: {
         Row: QueryLog
         Insert: QueryLogInsert
         Update: Partial<QueryLogInsert>
-      }
+      } & NoRelationships
       admin_mapping_uploads: {
         Row: AdminMappingUpload
         Insert: AdminMappingUploadInsert
         Update: AdminMappingUploadUpdate
-      }
+      } & NoRelationships
     }
+    Views: Record<string, never>
     Functions: {
       is_project_member: {
         Args: { p_project_id: string }
