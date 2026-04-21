@@ -161,3 +161,163 @@ def insert_normalized_rows(conn, rows: list[dict]) -> int:
         )
     conn.commit()
     return len(rows)
+
+
+# ── Overlap detection ─────────────────────────────────────────────────────────
+
+FINANCIAL_STATUS_SHEET = "Financial Status"
+
+
+def find_active_overlapping_rows(conn, upload_id: str, project_id: str) -> list[dict]:
+    """
+    Returns rows where an existing active row (different upload) shares the
+    overlap key with a newly inserted row for this upload.
+
+    Excludes Financial Status sheet (PRD §16.1).
+
+    Returns list of dicts with keys:
+      old_upload_id, sheet_name, report_month, report_year,
+      item_code, financial_type, data_type, old_value, new_value
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+                old.upload_id        AS old_upload_id,
+                old.sheet_name,
+                old.report_month,
+                old.report_year,
+                old.item_code,
+                old.financial_type,
+                old.data_type,
+                old.value            AS old_value,
+                new_r.value          AS new_value
+            FROM normalized_financial_rows AS old
+            JOIN normalized_financial_rows AS new_r
+                ON  old.project_id     = new_r.project_id
+                AND old.sheet_name     = new_r.sheet_name
+                AND old.report_month   = new_r.report_month
+                AND old.report_year    = new_r.report_year
+                AND old.item_code      IS NOT DISTINCT FROM new_r.item_code
+                AND old.financial_type IS NOT DISTINCT FROM new_r.financial_type
+            WHERE old.is_active = TRUE
+              AND old.upload_id  != %s
+              AND new_r.upload_id = %s
+              AND new_r.project_id = %s
+              AND old.sheet_name  != %s
+              AND new_r.sheet_name != %s
+            """,
+            (upload_id, upload_id, project_id,
+             FINANCIAL_STATUS_SHEET, FINANCIAL_STATUS_SHEET),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def deactivate_old_rows(conn, old_upload_id: str, superseded_by_upload_id: str) -> int:
+    """
+    Sets is_active=False and superseded_by_upload_id on all rows for old_upload_id.
+    Does NOT commit — caller manages the transaction.
+    Returns the number of rows deactivated.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE normalized_financial_rows
+               SET is_active = FALSE,
+                   superseded_by_upload_id = %s
+             WHERE upload_id = %s
+               AND is_active = TRUE
+            """,
+            (superseded_by_upload_id, old_upload_id),
+        )
+        return cur.rowcount
+
+
+def activate_new_rows(conn, upload_id: str) -> int:
+    """
+    Sets is_active=True on all rows for upload_id.
+    Does NOT commit — caller manages the transaction.
+    Returns the number of rows activated.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE normalized_financial_rows
+               SET is_active = TRUE
+             WHERE upload_id = %s
+               AND is_active = FALSE
+            """,
+            (upload_id,),
+        )
+        return cur.rowcount
+
+
+def insert_discrepancies(conn, records: list[dict]) -> int:
+    """
+    Bulk-inserts discrepancy records.
+    Does NOT commit — caller manages the transaction.
+    Returns number of records inserted.
+    """
+    if not records:
+        return 0
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_values(
+            cur,
+            """
+            INSERT INTO discrepancies (
+                project_id, sheet_name, report_month, report_year,
+                item_code, financial_type, data_type,
+                old_value, new_value,
+                old_upload_id, new_upload_id
+            ) VALUES %s
+            """,
+            [
+                (
+                    r["project_id"],
+                    r["sheet_name"],
+                    r["report_month"],
+                    r["report_year"],
+                    r.get("item_code"),
+                    r.get("financial_type"),
+                    r.get("data_type"),
+                    r.get("old_value"),
+                    r.get("new_value"),
+                    r["old_upload_id"],
+                    r["new_upload_id"],
+                )
+                for r in records
+            ],
+            page_size=500,
+        )
+    return len(records)
+
+
+def activate_upload(conn, upload_id: str, overlap_count: int) -> None:
+    """
+    Marks the upload as the active source of truth for its project+period.
+    Deactivates any previously active upload for the same (project_id, report_month, report_year).
+    Sets overlap_count to the number of discrepancy records created.
+    Commits (transaction B).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE report_uploads
+               SET is_active = FALSE, updated_at = now()
+             WHERE project_id  = (SELECT project_id  FROM report_uploads WHERE id = %s)
+               AND report_month = (SELECT report_month FROM report_uploads WHERE id = %s)
+               AND report_year  = (SELECT report_year  FROM report_uploads WHERE id = %s)
+               AND is_active = TRUE
+               AND id != %s
+            """,
+            (upload_id, upload_id, upload_id, upload_id),
+        )
+        cur.execute(
+            """
+            UPDATE report_uploads
+               SET is_active = TRUE, overlap_count = %s, updated_at = now()
+             WHERE id = %s
+            """,
+            (overlap_count, upload_id),
+        )
+    conn.commit()
