@@ -12,14 +12,14 @@ function toResponseType(res: ChatResponse): ResponseType | null {
   if (res.type === 'info') return null
   if (res.type === 'result') {
     const shortcut = res.interpretation.shortcut
-    if (shortcut === 'trend') return 'trend'
-    if (shortcut === 'compare') return 'compare'
-    if (shortcut === 'total') return 'total'
-    if (shortcut === 'detail') return 'detail'
-    if (shortcut === 'risk') return 'risk'
-    if (shortcut === 'cash flow') return 'cash_flow'
-    if (shortcut === 'list') return 'list'
-    if (shortcut === 'analyze' || shortcut === 'analyse') return 'table'
+    if (shortcut === 'Trend') return 'trend'
+    if (shortcut === 'Compare') return 'compare'
+    if (shortcut === 'Total') return 'total'
+    if (shortcut === 'Detail') return 'detail'
+    if (shortcut === 'Risk') return 'risk'
+    if (shortcut === 'Cash Flow Shortcut') return 'cash_flow'
+    if (shortcut === 'List') return 'list'
+    if (shortcut === 'Analyze') return 'table'
     return res.rows.length > 1 ? 'table' : 'value'
   }
   return null
@@ -86,11 +86,31 @@ export async function POST(
   if (!body.context) body.context = {}
   if (!body.context.project_code) body.context.project_code = projectId
 
+  // Look up real project UUID — needed by the ingestion service for DB queries
+  let projectUuid: string
+  try {
+    const supabase = createServerSupabase()
+    const { data: project } = await supabase
+      .from('projects')
+      .select('id')
+      .eq('project_code', projectId)
+      .single()
+    if (!project) {
+      return NextResponse.json({ type: 'error', message: 'Project not found.' }, { status: 404 })
+    }
+    projectUuid = project.id
+  } catch {
+    return NextResponse.json(
+      { type: 'error', message: 'Database is not configured.' },
+      { status: 500 }
+    )
+  }
+
   const startMs = Date.now()
 
   let response: ChatResponse
   try {
-    response = resolveQuery(body)
+    response = await resolveQuery(body, projectUuid)
   } catch (err) {
     console.error('[chat/route] resolver error', err)
     return NextResponse.json({ type: 'error', message: 'Query resolution failed.' }, { status: 500 })
