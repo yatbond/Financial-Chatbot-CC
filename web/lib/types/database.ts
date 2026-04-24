@@ -348,6 +348,24 @@ export type AdminMappingUploadUpdate = Partial<
 >
 
 // ─────────────────────────────────────────────────────────────
+// admin_notes
+// ─────────────────────────────────────────────────────────────
+
+export interface AdminNote {
+  id: string
+  project_id: string
+  entity_type: 'query_log' | 'mapping_upload'
+  entity_id: string
+  note: string
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export type AdminNoteInsert = Omit<AdminNote, 'id' | 'created_at' | 'updated_at'>
+export type AdminNoteUpsert = Pick<AdminNote, 'entity_type' | 'entity_id' | 'note' | 'created_by' | 'project_id'>
+
+// ─────────────────────────────────────────────────────────────
 // Supabase Database type map (for use with createClient<Database>)
 // ─────────────────────────────────────────────────────────────
 
@@ -412,6 +430,11 @@ export interface Database {
         Row: AdminMappingUpload
         Insert: AdminMappingUploadInsert
         Update: AdminMappingUploadUpdate
+      } & NoRelationships
+      admin_notes: {
+        Row: AdminNote
+        Insert: AdminNoteInsert
+        Update: Partial<AdminNoteUpsert>
       } & NoRelationships
     }
     Views: Record<string, never>
