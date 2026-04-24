@@ -1,23 +1,106 @@
-import { getMappingUploads, getMappingStats } from './actions'
+import React from 'react'
+import {
+  getMappingUploads,
+  getMappingStats,
+  getQueryLogs,
+  getDiscrepancies,
+  getAdminNotes,
+  saveAdminNote,
+} from './actions'
 import { MappingUploadForm } from '@/components/mapping-upload-form'
 import { MappingUploadHistory } from '@/components/mapping-upload-history'
-import type { AdminMappingUpload, MappingType } from '@/lib/types/database'
+import { AdminTabs } from '@/components/admin/AdminTabs'
+import { ExportButton } from '@/components/admin/ExportButton'
+import { QueryLogsTab } from '@/components/admin/QueryLogsTab'
+import { DiscrepanciesTab } from '@/components/admin/DiscrepanciesTab'
+import type { AdminTab } from '@/components/admin/AdminTabs'
+import type { AdminMappingUpload, MappingType, QueryMode, ResponseType } from '@/lib/types/database'
 
 interface AdminPageProps {
   params: Promise<{ projectId: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
 }
 
-export default async function AdminPage({ params }: AdminPageProps) {
-  const { projectId } = await params
+function parseTab(raw: string | string[] | undefined): AdminTab {
+  const v = Array.isArray(raw) ? raw[0] : raw
+  if (v === 'query-logs' || v === 'discrepancies') return v
+  return 'mappings'
+}
 
+function parseNum(raw: string | string[] | undefined, fallback: number): number {
+  const v = Array.isArray(raw) ? raw[0] : raw
+  const n = parseInt(v ?? '', 10)
+  return isNaN(n) || n < 1 ? fallback : n
+}
+
+function parseEnum<T extends string>(
+  raw: string | string[] | undefined,
+  allowed: T[]
+): T | null {
+  const v = Array.isArray(raw) ? raw[0] : raw
+  return v && (allowed as string[]).includes(v) ? (v as T) : null
+}
+
+export default async function AdminPage({ params, searchParams }: AdminPageProps) {
+  const { projectId } = await params
+  const sp = await searchParams
+
+  const tab = parseTab(sp.tab)
+  const page = parseNum(sp.page, 1)
+  const mode = parseEnum<QueryMode>(sp.mode, ['standard', 'verbose'])
+  const type = parseEnum<ResponseType>(sp.type, [
+    'value', 'table', 'trend', 'compare', 'total', 'ambiguity', 'missing', 'error',
+  ])
+
+  return (
+    <div className="min-h-screen bg-zinc-50">
+      {/* Header */}
+      <div className="border-b border-zinc-200 bg-white">
+        <div className="mx-auto max-w-5xl px-6 py-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-base font-semibold text-zinc-900">Admin</h1>
+            <ExportButton projectId={projectId} />
+          </div>
+        </div>
+        <div className="mx-auto max-w-5xl">
+          <AdminTabs projectId={projectId} activeTab={tab} />
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="mx-auto max-w-5xl px-6 py-6">
+        {tab === 'mappings' && (
+          <MappingsTab projectId={projectId} />
+        )}
+        {tab === 'query-logs' && (
+          <QueryLogsSection projectId={projectId} page={page} mode={mode} type={type} />
+        )}
+        {tab === 'discrepancies' && (
+          <DiscrepanciesSection projectId={projectId} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Mappings tab
+// ─────────────────────────────────────────────────────────────
+
+async function MappingsTab({ projectId }: { projectId: string }) {
   const [stats, ftmUploads, hmUploads] = await Promise.all([
     getMappingStats(),
     getMappingUploads('financial_type_map'),
     getMappingUploads('heading_map'),
   ])
 
+  const allUploadIds = [...ftmUploads, ...hmUploads].map(u => u.id)
+  const notes = await getAdminNotes(allUploadIds)
+
+  const saveNote = saveAdminNote.bind(null, 'mapping_upload')
+
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6">
+    <div className="space-y-6">
       <div className="rounded-lg border border-zinc-200 bg-white p-5">
         <h2 className="mb-3 text-sm font-semibold text-zinc-900">Current Mapping State</h2>
         <div className="grid grid-cols-3 gap-3">
@@ -41,6 +124,8 @@ export default async function AdminPage({ params }: AdminPageProps) {
           mappingType="financial_type_map"
           projectId={projectId}
           uploads={ftmUploads}
+          notes={notes}
+          onSave={(uploadId, note) => saveNote(uploadId, projectId, note)}
         />
         <MappingSection
           title="Heading Map"
@@ -56,6 +141,8 @@ export default async function AdminPage({ params }: AdminPageProps) {
           mappingType="heading_map"
           projectId={projectId}
           uploads={hmUploads}
+          notes={notes}
+          onSave={(uploadId, note) => saveNote(uploadId, projectId, note)}
         />
       </div>
     </div>
@@ -77,9 +164,11 @@ interface MappingSectionProps {
   mappingType: MappingType
   projectId: string
   uploads: AdminMappingUpload[]
+  notes: Record<string, import('@/lib/types/database').AdminNote>
+  onSave: (uploadId: string, note: string) => Promise<{ error: string | null }>
 }
 
-function MappingSection({ title, description, mappingType, projectId, uploads }: MappingSectionProps) {
+function MappingSection({ title, description, mappingType, projectId, uploads, notes, onSave }: MappingSectionProps) {
   return (
     <div className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5">
       <div>
@@ -89,8 +178,49 @@ function MappingSection({ title, description, mappingType, projectId, uploads }:
       <MappingUploadForm mappingType={mappingType} projectId={projectId} />
       <div>
         <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">Recent Uploads</h3>
-        <MappingUploadHistory uploads={uploads} />
+        <MappingUploadHistory uploads={uploads} notes={notes} onSave={onSave} />
       </div>
     </div>
   )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Query logs tab
+// ─────────────────────────────────────────────────────────────
+
+async function QueryLogsSection({
+  projectId,
+  page,
+  mode,
+  type,
+}: {
+  projectId: string
+  page: number
+  mode: QueryMode | null
+  type: ResponseType | null
+}) {
+  const filters = { mode: mode ?? undefined, type: type ?? undefined }
+  const { logs, total } = await getQueryLogs(projectId, filters, page)
+  const notes = await getAdminNotes(logs.map(l => l.id))
+
+  return (
+    <QueryLogsTab
+      projectId={projectId}
+      logs={logs}
+      notes={notes}
+      total={total}
+      page={page}
+      mode={mode}
+      type={type}
+    />
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Discrepancies tab
+// ─────────────────────────────────────────────────────────────
+
+async function DiscrepanciesSection({ projectId }: { projectId: string }) {
+  const discrepancies = await getDiscrepancies(projectId)
+  return <DiscrepanciesTab discrepancies={discrepancies} projectId={projectId} />
 }

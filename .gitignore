@@ -46,3 +46,6 @@ processed/
 
 # UI samples (mockups only)
 ui-samples/
+
+# Superpowers plugin cache
+.superpowers/
