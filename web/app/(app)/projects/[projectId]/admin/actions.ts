@@ -4,7 +4,17 @@ import { auth } from '@clerk/nextjs/server'
 import { revalidatePath } from 'next/cache'
 import { createServerSupabase } from '@/lib/supabase/server'
 import { parseCSV } from '@/lib/csv'
-import type { AdminMappingUpload, MappingType } from '@/lib/types/database'
+import type {
+  AdminMappingUpload,
+  MappingType,
+  QueryLog,
+  Discrepancy,
+  AdminNote,
+  AdminNoteUpsert,
+  QueryMode,
+  ResponseType,
+} from '@/lib/types/database'
+import type { ExportData, QueryLogIssue, MappingIssue, DiscrepancyNote } from '@/lib/admin/export'
 
 export type UploadMappingState = {
   error: string | null
@@ -216,5 +226,257 @@ export async function getMappingStats(): Promise<MappingStats> {
     financialTypeCount: ftm.count ?? 0,
     headingCount: hm.count ?? 0,
     aliasCount: ha.count ?? 0,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+async function resolveProjectUuid(
+  supabase: ReturnType<typeof createServerSupabase>,
+  projectCode: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('projects')
+    .select('id')
+    .eq('project_code', projectCode)
+    .single()
+  return data?.id ?? null
+}
+
+// ─────────────────────────────────────────────────────────────
+// Read actions
+// ─────────────────────────────────────────────────────────────
+
+export interface QueryLogFilters {
+  mode?: QueryMode
+  type?: ResponseType
+}
+
+export interface PaginatedQueryLogs {
+  logs: QueryLog[]
+  total: number
+}
+
+export async function getQueryLogs(
+  projectCode: string,
+  filters: QueryLogFilters,
+  page: number
+): Promise<PaginatedQueryLogs> {
+  const PAGE_SIZE = 20
+  let supabase: ReturnType<typeof createServerSupabase>
+  try { supabase = createServerSupabase() } catch { return { logs: [], total: 0 } }
+
+  const projectId = await resolveProjectUuid(supabase, projectCode)
+  if (!projectId) return { logs: [], total: 0 }
+
+  let query = supabase
+    .from('query_logs')
+    .select('*', { count: 'exact' })
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+    .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1)
+
+  if (filters.mode) query = query.eq('mode', filters.mode)
+  if (filters.type) query = query.eq('response_type', filters.type)
+
+  const { data, count } = await query
+  return { logs: (data ?? []) as QueryLog[], total: count ?? 0 }
+}
+
+export async function getDiscrepancies(projectCode: string): Promise<Discrepancy[]> {
+  let supabase: ReturnType<typeof createServerSupabase>
+  try { supabase = createServerSupabase() } catch { return [] }
+
+  const projectId = await resolveProjectUuid(supabase, projectCode)
+  if (!projectId) return []
+
+  const { data } = await supabase
+    .from('discrepancies')
+    .select('*')
+    .eq('project_id', projectId)
+    .eq('review_status', 'pending')
+    .order('detected_at', { ascending: false })
+
+  return (data ?? []) as Discrepancy[]
+}
+
+export async function getAdminNotes(
+  entityIds: string[]
+): Promise<Record<string, AdminNote>> {
+  if (entityIds.length === 0) return {}
+  let supabase: ReturnType<typeof createServerSupabase>
+  try { supabase = createServerSupabase() } catch { return {} }
+
+  const { data } = await supabase
+    .from('admin_notes')
+    .select('*')
+    .in('entity_id', entityIds)
+
+  const result: Record<string, AdminNote> = {}
+  for (const note of (data ?? []) as AdminNote[]) {
+    result[note.entity_id] = note
+  }
+  return result
+}
+
+// ─────────────────────────────────────────────────────────────
+// Write actions
+// ─────────────────────────────────────────────────────────────
+
+export async function reviewDiscrepancy(
+  discrepancyId: string,
+  status: 'reviewed' | 'dismissed',
+  note: string,
+  projectCode: string
+): Promise<{ error: string | null }> {
+  const { userId } = await auth()
+  if (!userId) return { error: 'Unauthorized' }
+
+  let supabase: ReturnType<typeof createServerSupabase>
+  try { supabase = createServerSupabase() } catch { return { error: 'Supabase not configured' } }
+
+  const { error } = await supabase
+    .from('discrepancies')
+    .update({
+      review_status: status,
+      reviewer_note: note.trim() || null,
+      reviewed_by: userId,
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq('id', discrepancyId)
+
+  if (error) return { error: error.message }
+  revalidatePath(`/projects/${projectCode}/admin`)
+  return { error: null }
+}
+
+export async function saveAdminNote(
+  entityType: 'query_log' | 'mapping_upload',
+  entityId: string,
+  projectCode: string,
+  note: string
+): Promise<{ error: string | null }> {
+  const { userId } = await auth()
+  if (!userId) return { error: 'Unauthorized' }
+
+  let supabase: ReturnType<typeof createServerSupabase>
+  try { supabase = createServerSupabase() } catch { return { error: 'Supabase not configured' } }
+
+  const projectId = await resolveProjectUuid(supabase, projectCode)
+  if (!projectId) return { error: 'Project not found' }
+
+  const upsertData: AdminNoteUpsert = {
+    entity_type: entityType,
+    entity_id: entityId,
+    project_id: projectId,
+    note: note.trim(),
+    created_by: userId,
+  }
+
+  const { error } = await supabase
+    .from('admin_notes')
+    .upsert(upsertData, { onConflict: 'entity_type,entity_id' })
+
+  if (error) return { error: error.message }
+  revalidatePath(`/projects/${projectCode}/admin`)
+  return { error: null }
+}
+
+export async function exportIssues(projectCode: string): Promise<ExportData | null> {
+  let supabase: ReturnType<typeof createServerSupabase>
+  try { supabase = createServerSupabase() } catch { return null }
+
+  const projectId = await resolveProjectUuid(supabase, projectCode)
+  if (!projectId) return null
+
+  const { data: project } = await supabase
+    .from('projects')
+    .select('project_code, project_name')
+    .eq('id', projectId)
+    .single()
+
+  const { data: notes } = await supabase
+    .from('admin_notes')
+    .select('*')
+    .eq('project_id', projectId)
+
+  const { data: discData } = await supabase
+    .from('discrepancies')
+    .select('*')
+    .eq('project_id', projectId)
+    .not('reviewer_note', 'is', null)
+
+  const allNotes = (notes ?? []) as AdminNote[]
+  const queryLogIds = allNotes.filter(n => n.entity_type === 'query_log').map(n => n.entity_id)
+  const mappingUploadIds = allNotes.filter(n => n.entity_type === 'mapping_upload').map(n => n.entity_id)
+
+  const [queryLogsData, mappingUploadsData] = await Promise.all([
+    queryLogIds.length > 0
+      ? supabase.from('query_logs').select('id, raw_query, response_type, mode, execution_ms, created_at').in('id', queryLogIds)
+      : Promise.resolve({ data: [] }),
+    mappingUploadIds.length > 0
+      ? supabase.from('admin_mapping_uploads').select('id, original_filename, mapping_type, created_at').in('id', mappingUploadIds)
+      : Promise.resolve({ data: [] }),
+  ])
+
+  type PartialQueryLog = Pick<QueryLog, 'id' | 'raw_query' | 'response_type' | 'mode' | 'execution_ms' | 'created_at'>
+  type PartialUpload = Pick<AdminMappingUpload, 'id' | 'original_filename' | 'mapping_type' | 'created_at'>
+  const queryLogMap = new Map((queryLogsData.data ?? []).map((r: PartialQueryLog) => [r.id, r]))
+  const mappingUploadMap = new Map((mappingUploadsData.data ?? []).map((r: PartialUpload) => [r.id, r]))
+
+  const queryLogIssues: QueryLogIssue[] = []
+  const mappingIssues: MappingIssue[] = []
+
+  for (const n of allNotes) {
+    if (n.entity_type === 'query_log') {
+      const log = queryLogMap.get(n.entity_id)
+      if (log) {
+        queryLogIssues.push({
+          index: queryLogIssues.length + 1,
+          rawQuery: log.raw_query,
+          responseType: log.response_type,
+          mode: log.mode,
+          executionMs: log.execution_ms,
+          loggedAt: log.created_at,
+          adminNote: n.note,
+        })
+      }
+    } else if (n.entity_type === 'mapping_upload') {
+      const upload = mappingUploadMap.get(n.entity_id)
+      if (upload) {
+        mappingIssues.push({
+          index: mappingIssues.length + 1,
+          mappingType: upload.mapping_type,
+          filename: upload.original_filename,
+          uploadedAt: upload.created_at,
+          adminNote: n.note,
+        })
+      }
+    }
+  }
+
+  const discrepancyNotes: DiscrepancyNote[] = ((discData ?? []) as Discrepancy[])
+    .filter(d => d.reviewer_note)
+    .map((d, i) => ({
+      index: i + 1,
+      sheetName: d.sheet_name,
+      period: `${d.report_year}-${String(d.report_month).padStart(2, '0')}`,
+      dataType: d.data_type,
+      itemCode: d.item_code,
+      oldValue: d.old_value,
+      newValue: d.new_value,
+      reviewStatus: d.review_status,
+      reviewerNote: d.reviewer_note!,
+    }))
+
+  return {
+    projectCode: project?.project_code ?? projectCode,
+    projectName: (project as { project_name?: string } | null)?.project_name ?? '',
+    generatedAt: new Date().toISOString(),
+    queryLogIssues,
+    mappingIssues,
+    discrepancyNotes,
   }
 }
