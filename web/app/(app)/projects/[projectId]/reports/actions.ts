@@ -53,7 +53,7 @@ export async function uploadReport(
   const { data: project, error: projectError } = await supabase
     .from('projects')
     .select('id')
-    .eq('project_code', projectId)
+    .eq('id', projectId)
     .single()
 
   if (projectError || !project) {
@@ -122,7 +122,7 @@ export async function getReportUploads(projectId: string): Promise<ReportUpload[
   const { data: project } = await supabase
     .from('projects')
     .select('id')
-    .eq('project_code', projectId)
+    .eq('id', projectId)
     .single()
 
   if (!project) return []
