@@ -602,6 +602,7 @@ class QueryResolver:
             partial.financial_type in MONTHLY_FINANCIAL_TYPES
             and effective_month is None
             and partial.sheet_name is None
+            and not ctx.sheet_name
             and shortcut not in _SNAPSHOT_SHORTCUTS
             and shortcut not in {"Trend", "Cash Flow Shortcut", "Compare"}
         ):

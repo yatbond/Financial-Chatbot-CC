@@ -116,6 +116,7 @@ class PostgresDataProvider(DataProvider):
 
 
 def _to_row(r: dict) -> FinancialRow:
+    raw_value = r.get("value")
     return FinancialRow(
         project_id=r["project_id"],
         sheet_name=r["sheet_name"],
@@ -127,5 +128,5 @@ def _to_row(r: dict) -> FinancialRow:
         friendly_name=r.get("friendly_name"),
         category=r.get("category"),
         tier=r.get("tier"),
-        value=r.get("value"),
+        value=float(raw_value) if raw_value is not None else None,
     )

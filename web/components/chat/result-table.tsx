@@ -21,10 +21,7 @@ interface ResultTableProps {
 function formatCell(value: string | number | null): string {
   if (value === null || value === undefined) return '—'
   if (typeof value === 'number') {
-    if (Math.abs(value) >= 1000) {
-      return value.toLocaleString('en-HK', { maximumFractionDigits: 0 })
-    }
-    return String(value)
+    return Math.round(value).toLocaleString('en-HK')
   }
   return String(value)
 }

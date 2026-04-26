@@ -105,7 +105,7 @@ def query_endpoint(req: QueryRequest):
         return JSONResponse(result)
     except Exception as exc:
         log.exception("Query resolution failed for project=%s query=%r", req.project_id, req.query)
-        return JSONResponse({"type": "error", "message": "Query resolution failed."}, status_code=500)
+        return JSONResponse({"type": "error", "message": f"Query failed: {type(exc).__name__}: {exc}"})
     finally:
         conn.close()
 
