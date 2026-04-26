@@ -93,7 +93,7 @@ export async function POST(
     const { data: project } = await supabase
       .from('projects')
       .select('id')
-      .eq('project_code', projectId)
+      .eq('id', projectId)
       .single()
     if (!project) {
       return NextResponse.json({ type: 'error', message: 'Project not found.' }, { status: 404 })
