@@ -1,15 +1,30 @@
 import Link from 'next/link'
-import { MOCK_PROJECTS } from '@/lib/mock-data'
 import { ContextBar } from '@/components/context-bar'
+import { createServerSupabase } from '@/lib/supabase/server'
 
-export default function ProjectsPage() {
+export const dynamic = 'force-dynamic'
+
+export default async function ProjectsPage() {
+  const supabase = createServerSupabase()
+  const { data: projects, error } = await supabase
+    .from('projects')
+    .select('id, project_code, project_name')
+    .order('project_code', { ascending: true })
+
   return (
     <>
       <ContextBar />
       <main className="flex-1 overflow-y-auto p-6">
         <h1 className="mb-6 text-lg font-semibold text-zinc-900">Projects</h1>
+
+        {error && (
+          <p className="mb-4 text-sm text-red-500">
+            Failed to load projects: {error.message}
+          </p>
+        )}
+
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {MOCK_PROJECTS.map((project) => (
+          {(projects ?? []).map((project) => (
             <Link
               key={project.id}
               href={`/projects/${project.id}/chat`}
@@ -23,10 +38,13 @@ export default function ProjectsPage() {
               </div>
             </Link>
           ))}
+
+          {!error && (projects ?? []).length === 0 && (
+            <p className="col-span-3 text-sm text-zinc-400">
+              No projects found. Import an Excel report to get started.
+            </p>
+          )}
         </div>
-        <p className="mt-6 text-xs text-zinc-400">
-          Showing mock data — connect Supabase in Phase 3 to load real projects.
-        </p>
       </main>
     </>
   )
